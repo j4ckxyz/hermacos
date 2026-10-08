@@ -1,0 +1,27 @@
+[package]
+name = "hermes-core"
+description = "Portable client core for Hermes Agent: auth, sessions, gateway, markdown."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "hermes_core"
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[dependencies]
+uniffi = "0.32"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros", "io-util"] }
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "json", "cookies"] }
+tokio-tungstenite = { version = "0.30", features = ["native-tls"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+url = "2"
+sha2 = "0.11"
+getrandom = "0.4"
+pulldown-cmark = { version = "0.13", default-features = false }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }

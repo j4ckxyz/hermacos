@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Core unit tests
+        run: cargo test -p hermes-core
+
+      - name: Core against the mock dashboard
+        run: |
+          cargo build -p hermes-mock -p hermes-core --examples
+          target/debug/hermes-mock --port 9119 --many &
+          sleep 2
+          cargo run -p hermes-core --example features -- http://127.0.0.1:9119
+          cargo run -p hermes-core --example smoke -- http://127.0.0.1:9119 admin hermes "deploy the gateway"
+
+      - name: Build the app
+        run: scripts/build.sh --debug

@@ -1,0 +1,8 @@
+/target
+/build
+/dist
+/app/.build
+/app/Vendor
+/app/Sources/HermesCore/hermes_core.swift
+/app/Sources/hermes_coreFFI/include/hermes_coreFFI.h
+.DS_Store

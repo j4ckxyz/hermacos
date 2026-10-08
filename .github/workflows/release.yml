@@ -1,0 +1,90 @@
+name: Release
+
+# Pushing a version tag builds the installer and publishes a GitHub release:
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# Optional repository secrets turn on Developer ID signing and notarization, so the disk image
+# opens without a Gatekeeper warning:
+#
+#   DEVELOPER_ID_P12           base64 of the "Developer ID Application" certificate (.p12)
+#   DEVELOPER_ID_P12_PASSWORD  its password
+#   DEVELOPER_ID_IDENTITY      e.g. "Developer ID Application: Jane Doe (TEAMID1234)"
+#   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD  (an app-specific password)
+#
+# Without them the app is ad-hoc signed.
+
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-26
+    env:
+      VERSION: ${{ github.ref_name }}
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Rust targets for a universal build
+        run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+
+      - name: Test the core
+        run: |
+          cargo test -p hermes-core
+          cargo build -p hermes-mock -p hermes-core --examples
+          target/debug/hermes-mock --port 9119 --many &
+          sleep 2
+          cargo run -p hermes-core --example features -- http://127.0.0.1:9119
+
+      - name: Import the signing certificate
+        id: signing
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+          IDENTITY: ${{ secrets.DEVELOPER_ID_IDENTITY }}
+        run: |
+          if [[ -z "$P12" || -z "$IDENTITY" ]]; then
+            echo "No signing certificate configured; the app will be ad-hoc signed."
+            echo "identity=-" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          echo "$P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/certificate.p12" -k "$keychain" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" login.keychain-db
+          rm "$RUNNER_TEMP/certificate.p12"
+          echo "identity=$IDENTITY" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          CODESIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
+        run: scripts/build.sh --universal
+
+      - name: Package
+        env:
+          CODESIGN_IDENTITY: ${{ steps.signing.outputs.identity }}
+          NOTARY_APPLE_ID: ${{ secrets.NOTARY_APPLE_ID }}
+          NOTARY_TEAM_ID: ${{ secrets.NOTARY_TEAM_ID }}
+          NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
+        run: scripts/package.sh
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          # 0.x versions and anything with a suffix (v0.3.0-beta.1) are marked as pre-releases.
+          if [[ "$VERSION" == v0.* || "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$VERSION" dist/*.dmg dist/*.zip dist/SHA256SUMS.txt \
+            --title "Hermacos ${VERSION#v}" --generate-notes "${prerelease[@]}"

@@ -1,0 +1,13 @@
+[package]
+name = "hermes-mock"
+description = "A stand-in Hermes dashboard for developing and testing clients offline."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+axum = { version = "0.8", features = ["ws"] }
+tokio = { version = "1", features = ["full"] }
+serde_json = "1"
+sha2 = "0.11"
