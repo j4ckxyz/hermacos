@@ -275,3 +275,74 @@ pub fn seed_sessions(now: f64, many: bool) -> Vec<Session> {
     }
     sessions
 }
+
+// ───────────────────────── slash commands ─────────────────────────
+
+pub fn command_catalog() -> Value {
+    json!({
+        "categories": [
+            { "name": "Session", "pairs": [
+                ["/new", "Start a new session"],
+                ["/title", "Rename this session"],
+                ["/undo", "Take back your last message"],
+                ["/compress", "Summarise older turns to free context"],
+                ["/usage", "Show token usage for this session"],
+                ["/stop", "Stop the running reply"],
+            ]},
+            { "name": "Configuration", "pairs": [
+                ["/model", "Show or switch the model"],
+                ["/reasoning", "Set reasoning effort or visibility"],
+                ["/yolo", "Toggle approval-free mode"],
+            ]},
+            { "name": "Info", "pairs": [
+                ["/help", "List available commands"],
+                ["/status", "Show session and gateway status"],
+                ["/insights", "Usage insights for recent days"],
+            ]},
+            { "name": "Skills", "pairs": [
+                ["/plan-trip", "Plan a road trip with stops and timings"],
+                ["/github-pr-workflow", "Review and land a pull request"],
+            ]},
+        ],
+        "canon": { "/reset": "/new", "/h": "/help", "/tokens": "/usage" },
+        "sub": { "/reasoning": ["low", "medium", "high", "show", "hide"], "/yolo": ["on", "off"] },
+        "skills": { "plan-trip": {}, "github-pr-workflow": {} }, "skill_count": 2, "warning": "",
+    })
+}
+
+/// Printed output of a command the slash worker runs, with terminal colours like the real one.
+pub fn slash_output(name: &str, arg: &str) -> Option<String> {
+    let bold = |text: &str| format!("\u{1b}[1m{text}\u{1b}[0m");
+    Some(match name {
+        "usage" | "tokens" => format!(
+            "{}\n  Model            hermes-4-405b\n  Input tokens     61,204\n  Output tokens     9,412\n  Cache read       21,300  (34% hit rate)\n  Reasoning         2,010\n  API calls            17\n  Context          38,112 / 200,000  (19%)\n  Cost              $0.38\n",
+            bold("Session usage")
+        ),
+        "status" => format!("{}\n  Gateway   running\n  Model     hermes-4-405b\n  Platforms discord ✓  telegram ✓\n", bold("Status")),
+        "model" if arg.is_empty() => "Current model: hermes-4-405b (nous)\nUse /model <name> to switch.".into(),
+        "model" => format!("Model switched to {arg}"),
+        "reasoning" if arg.is_empty() => "reasoning: medium · display hide".into(),
+        "reasoning" => format!("reasoning: {arg}"),
+        "yolo" => format!("YOLO mode {}", if arg == "off" { "off" } else { "on" }),
+        "title" => format!("Title set: {arg}"),
+        "compress" => "Compressed 14 turns into a summary (freed 21,480 tokens).".into(),
+        "insights" => "Last 7 days: 41 sessions, 612 messages, 1.9M tokens.".into(),
+        "help" | "h" => "Commands: /new /title /undo /compress /usage /model /reasoning /help /status".into(),
+        _ => return None,
+    })
+}
+
+/// Typed directives for commands that are not plain output.
+pub fn slash_dispatch(name: &str, arg: &str) -> Option<Value> {
+    Some(match name {
+        "plan-trip" => json!({
+            "type": "skill", "name": "plan-trip",
+            "message": format!("[Skill: plan-trip]\nPlan a road trip with stops and timings.\n\nUser request: plan the ohio trip {arg}"),
+            "display": format!("/plan-trip {arg}").trim_end(),
+        }),
+        "undo" => json!({ "type": "prefill", "message": "what I typed before", "notice": "↩ Took back your last message." }),
+        "goal" => json!({ "type": "send", "message": format!("Work toward this goal: {arg}"), "notice": format!("⊙ Goal set: {arg}") }),
+        "tokens" => json!({ "type": "alias", "target": "usage" }),
+        _ => return None,
+    })
+}

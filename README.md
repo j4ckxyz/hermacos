@@ -53,7 +53,15 @@ SwiftUI APIs introduced there.
 2. If the server has accounts, enter the dashboard username and password. Dashboards without
    accounts (loopback / trusted network) connect straight away. OAuth providers open the browser.
 
-Tokens are kept in the login keychain; the access token is refreshed automatically.
+The access token is refreshed automatically, so you sign in once.
+
+Where the tokens live depends on how the app was signed. A build signed with an Apple
+Developer ID keeps them in the login keychain. Other builds (including the current releases)
+keep them in `~/Library/Application Support/Hermacos/credentials.json`, readable only by your
+account and encrypted with a key held in the Mac's Secure Enclave, so a copy of the file is
+useless on another machine. The keychain isn't used there because macOS identifies an app
+without a Developer ID by the hash of each build, and would ask for your keychain password
+again after every update.
 
 How it talks to Hermes: the dashboard's native sign-in flow (`/auth/native/*`, RFC 8252 with
 PKCE) for bearer tokens, the dashboard REST API for the session list and history, and the
@@ -73,6 +81,10 @@ PKCE) for bearer tokens, the dashboard REST API for the session list and history
 - **Rewrite a message.** Hover one of your own messages for Copy and Rewrite. Rewriting stops
   any reply in flight, cuts the conversation back to that message on the server, and sends the
   new text with the same attachments.
+- **Slash commands.** Type `/` for a menu of everything the server offers (built-ins, quick
+  commands, plugins, skills), filtered as you type; arrows to move, Tab or Return to take one.
+  `/usage`, `/model`, `/compress` and the rest print their output in the chat; skills run as
+  prompts. `/new` and `/help` are answered by the app.
 - **Activity, folded.** Thinking and tool calls collapse into one line showing the current
   step; click it to see every step, click again to fold it away.
 - **Citations.** When a reply ends with a numbered source list, each `[n]` in the text becomes
@@ -88,6 +100,7 @@ PKCE) for bearer tokens, the dashboard REST API for the session list and history
 | ⌘N | New chat |
 | any typing | Starts a message when no field is focused |
 | ⌘V | Paste files, images or text into the message |
+| / | Open the command menu (↑ ↓ to move, Tab to complete, Esc to close) |
 | ⌘F | Search chats |
 | ⌘L | Focus the message field |
 | Return / ⇧Return | Send / new line |
@@ -112,7 +125,8 @@ cargo run -p hermes-core --example smoke -- http://127.0.0.1:9119 admin hermes "
 
 The mock streams canned replies; prompts containing `trip`, `code`, `deploy` or `sources`
 exercise tables and link previews, code blocks, tool calls with an approval request, and a
-researched answer with thinking, searches and numbered citations. Flags: `--open` (no
+researched answer with thinking, searches and numbered citations. It also answers a small
+set of slash commands (`/usage`, `/model`, `/reasoning`, a skill, `/undo`). Flags: `--open` (no
 accounts), `--plan` (reports a metered plan), `--many` (150 extra chats, for paging),
 `--legacy-ws` (ticket-only WebSocket auth, like older servers).
 
@@ -125,7 +139,8 @@ Environment variables for driving the app in development:
 
 | Variable | Effect |
 |:--|:--|
-| `HERMACOS_EPHEMERAL=1` | Don't read or write the keychain or saved account |
+| `HERMACOS_EPHEMERAL=1` | Don't read or write the saved account or credentials |
+| `HERMACOS_STORE_DIR=<folder>` | Keep the saved account and credentials in this folder instead |
 | `HERMACOS_AUTOLOGIN="url\|user\|password"` | Sign in at launch |
 | `HERMACOS_SCRIPT=<steps>` | Then run newline-separated steps: type keys, paste, attach, send, rewrite, dump state as JSON. See `Support/Automation.swift` |
 | `HERMACOS_APPEARANCE=light\|dark` | Pin the appearance |

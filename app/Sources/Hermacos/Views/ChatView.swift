@@ -30,6 +30,10 @@ struct ChatView: View {
                         .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
                 ConnectionNotice(state: model.connection)
+                if !chat.commandSuggestions.isEmpty {
+                    SlashCommandMenu(chat: chat)
+                        .transition(.opacity.combined(with: .offset(y: 6)))
+                }
                 ComposerView(chat: chat)
             }
             .frame(maxWidth: Theme.columnWidth + 24)
@@ -38,6 +42,7 @@ struct ChatView: View {
             .padding(.top, 6)
             .frame(maxWidth: .infinity)
             .animation(.snappy(duration: 0.28), value: chat.hasPendingRequest)
+            .animation(.snappy(duration: 0.18), value: chat.commandSuggestions.isEmpty)
         }
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)

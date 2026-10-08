@@ -53,6 +53,8 @@ final class AppModel {
     var composerFocusRequests = 0
     var searchFocusRequests = 0
 
+    /// Slash commands the server offers, for the command menu.
+    var commands: [SlashCommand] = []
     /// Token and cost totals for the sidebar's usage ring; nil until first loaded.
     var usage: UsageSummary?
     var showingUsage = false
@@ -99,6 +101,9 @@ final class AppModel {
         installKeyRouter()
         if let (account, tokens) = AccountStore.load() {
             start(account: account, tokens: tokens)
+            if let script = ProcessInfo.processInfo.environment["HERMACOS_SCRIPT"] {
+                Task { await Automation(model: self).run(script) }
+            }
         } else {
             phase = .signedOut
             runLaunchAutomation()
@@ -167,6 +172,7 @@ final class AppModel {
         refreshTask?.cancel()
         usageTask?.cancel()
         usage = nil
+        commands = []
         showingUsage = false
         sessionsError = nil
         hasMoreSessions = false
@@ -199,6 +205,7 @@ final class AppModel {
             case .connected:
                 if hasConnectedOnce { scheduleRefresh() }
                 hasConnectedOnce = true
+                Task { await refreshCommands() }
             case .reconnecting, .disconnected:
                 if wasConnected { dropLiveSessions() }
             case .unauthorized:
@@ -275,6 +282,12 @@ final class AppModel {
     func newChat() {
         guard phase == .ready else { return }
         if selection == .newChat, chat === draftChat {
+            // Already on the new chat. If it has something in it (command output, a draft
+            // that was never sent as a message), start it over.
+            if !chat.items.isEmpty {
+                draftChat = ChatModel(app: self)
+                chat = draftChat
+            }
             composerFocusRequests += 1
             return
         }
@@ -374,6 +387,13 @@ final class AppModel {
             await self?.refreshSessions()
             await self?.refreshUsage()
         }
+    }
+
+    // MARK: Slash commands
+
+    func refreshCommands() async {
+        guard let client else { return }
+        if let catalog = try? await client.commands(sessionId: nil), !catalog.isEmpty { commands = catalog }
     }
 
     // MARK: Usage

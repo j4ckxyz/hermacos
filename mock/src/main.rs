@@ -598,6 +598,32 @@ fn handle_frame(
             reply(json!({ "attached": true, "name": name, "path": format!("/home/hermes/workspace/{ref_path}"),
                           "ref_path": ref_path, "ref_text": format!("@file:{quoted}"), "uploaded": true }));
         }
+        "commands.catalog" => reply(script::command_catalog()),
+        "slash.exec" => {
+            let command = params["command"].as_str().unwrap_or_default().trim().trim_start_matches('/').to_owned();
+            let (name, arg) = command.split_once(' ').map_or((command.as_str(), ""), |(n, a)| (n, a.trim()));
+            if !app.store.lock().unwrap().live.contains_key(params["session_id"].as_str().unwrap_or_default()) {
+                let _ = tx.send(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": 4001, "message": "unknown session" } }).to_string());
+                return;
+            }
+            match script::slash_output(name, arg) {
+                Some(output) => reply(json!({ "output": output })),
+                // Skills and composer directives are refused here, as the real gateway does.
+                None => {
+                    let _ = tx.send(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": 4018, "message": format!("skill command: use command.dispatch for /{name}") } }).to_string());
+                }
+            }
+        }
+        "command.dispatch" => {
+            let name = params["name"].as_str().unwrap_or_default().trim_start_matches('/');
+            let arg = params["arg"].as_str().unwrap_or_default();
+            match script::slash_dispatch(name, arg) {
+                Some(directive) => reply(directive),
+                None => {
+                    let _ = tx.send(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": 4018, "message": format!("not a quick/plugin/bundle/skill command: {name}") } }).to_string());
+                }
+            }
+        }
         "usage.bars" => {
             if app.plan {
                 reply(json!({ "available": true, "plan_name": "Nous Pro", "renews_display": "renews 1 Nov",

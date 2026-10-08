@@ -64,6 +64,20 @@ struct ComposerView: View {
                         insertNewline()
                         return .handled
                     }
+                    // While the command menu is open the arrows move through it, Tab takes
+                    // the highlighted command and Escape closes it.
+                    .onKeyPress(.downArrow) { moveMenu(1) }
+                    .onKeyPress(.upArrow) { moveMenu(-1) }
+                    .onKeyPress(.tab) {
+                        guard let suggestion = chat.highlightedSuggestion else { return .ignored }
+                        chat.accept(suggestion)
+                        return .handled
+                    }
+                    .onKeyPress(.escape) {
+                        guard !chat.commandSuggestions.isEmpty else { return .ignored }
+                        chat.commandMenuDismissedFor = chat.draft
+                        return .handled
+                    }
                     .padding(.leading, 6)
                     .padding(.vertical, 12)
                     .accessibilityLabel("Message")
@@ -116,7 +130,19 @@ struct ComposerView: View {
         selection = TextSelection(insertionPoint: chat.draft.endIndex)
     }
 
+    private func moveMenu(_ offset: Int) -> KeyPress.Result {
+        guard !chat.commandSuggestions.isEmpty else { return .ignored }
+        chat.moveCommandSelection(by: offset)
+        return .handled
+    }
+
     private func send() {
+        // Return on a highlighted command that isn't fully typed yet completes it first.
+        if let suggestion = chat.highlightedSuggestion,
+           suggestion.title.lowercased() != chat.draft.trimmingCharacters(in: .whitespaces).lowercased() {
+            chat.accept(suggestion)
+            return
+        }
         guard chat.canSend else { return }
         chat.send()
         focused = true
@@ -196,5 +222,57 @@ struct AttachmentChip: View {
         .help(attachment.name)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(attachment.isImage ? "Image \(attachment.name)" : "File \(attachment.name)")
+    }
+}
+
+/// The slash-command menu that opens above the message field.
+struct SlashCommandMenu: View {
+    let chat: ChatModel
+    private static let rowHeight: CGFloat = 30
+    private static let visibleRows = 7
+
+    var body: some View {
+        let suggestions = chat.commandSuggestions
+        let selected = chat.highlightedSuggestion?.id
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(suggestions) { suggestion in
+                        Button {
+                            chat.accept(suggestion)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Text(suggestion.title)
+                                    .font(.system(size: 12.5, weight: .medium, design: .monospaced))
+                                    .lineLimit(1)
+                                    .layoutPriority(1)
+                                Text(suggestion.detail)
+                                    .font(.system(size: 12.5))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 10)
+                            .frame(height: Self.rowHeight)
+                            .background(suggestion.id == selected ? AnyShapeStyle(.tint.opacity(0.22)) : AnyShapeStyle(.clear),
+                                        in: .rect(cornerRadius: 8))
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .id(suggestion.id)
+                        .accessibilityLabel("\(suggestion.title), \(suggestion.detail)")
+                        .accessibilityAddTraits(suggestion.id == selected ? .isSelected : [])
+                    }
+                }
+                .padding(5)
+            }
+            // A fixed height: this sits outside the transcript's scroll view.
+            .frame(height: CGFloat(min(suggestions.count, Self.visibleRows)) * Self.rowHeight + 10)
+            .onChange(of: selected) { _, id in
+                if let id { proxy.scrollTo(id) }
+            }
+        }
+        .glassEffect(.regular, in: .rect(cornerRadius: 14))
+        .accessibilityLabel("Commands")
     }
 }

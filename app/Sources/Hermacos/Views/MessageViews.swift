@@ -55,7 +55,9 @@ private struct UserMessageView: View {
         .onHover { hovering = $0 }
         .contextMenu {
             Button("Copy", systemImage: "square.on.square") { copyToPasteboard(item.plainText) }
-            Button("Rewrite…", systemImage: "pencil") { beginEditing() }
+            if item.canRewrite {
+                Button("Rewrite…", systemImage: "pencil") { beginEditing() }
+            }
         }
         .onChange(of: isEditing) { _, editing in
             if editing {
@@ -78,7 +80,9 @@ private struct UserMessageView: View {
                         copied = false
                     }
                 }
-                MessageActionButton(symbol: "pencil", label: "Rewrite: edit and send again", action: beginEditing)
+                if item.canRewrite {
+                    MessageActionButton(symbol: "pencil", label: "Rewrite: edit and send again", action: beginEditing)
+                }
             }
             .opacity(showsActions ? 1 : 0)
             .animation(.easeOut(duration: 0.15), value: showsActions)
@@ -206,7 +210,7 @@ private struct AssistantMessageView: View {
                 } else {
                     out.append(.activity(id: part.id, steps: [part]))
                 }
-            case .text, .notice:
+            case .text, .notice, .output:
                 out.append(.single(part))
             }
         }
@@ -222,6 +226,8 @@ private struct AssistantMessageView: View {
                     TextSegmentView(segment: segment)
                 case .single(.notice(_, let text, let isError)):
                     NoticeView(text: text, isError: isError)
+                case .single(.output(_, let text)):
+                    CommandOutputView(text: text)
                 case .single:
                     EmptyView()
                 case .activity(_, let steps):
@@ -439,7 +445,7 @@ private struct ActivityView: View {
                 } else {
                     out.append(Batch(id: step.id, content: .tools([call])))
                 }
-            case .text, .notice:
+            case .text, .notice, .output:
                 break
             }
         }
@@ -635,6 +641,29 @@ private struct ThoughtText: View {
         .foregroundStyle(.secondary)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// What a slash command printed. Terminal-shaped text: fixed pitch, columns kept aligned,
+/// scrolling sideways rather than wrapping.
+private struct CommandOutputView: View {
+    let text: String
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            Text(text)
+                .font(.system(size: 12, design: .monospaced))
+                .lineSpacing(2.5)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: true)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+        }
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+        .background(.fill.quinary, in: .rect(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator.opacity(0.6), lineWidth: 1))
+        .frame(maxWidth: 620, alignment: .leading)
+        .accessibilityLabel("Command output")
     }
 }
 

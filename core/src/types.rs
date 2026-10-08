@@ -142,6 +142,31 @@ pub struct StagedAttachment {
     pub server_path: Option<String>,
 }
 
+/// A slash command the server offers: built-in, quick command, plugin or skill.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct SlashCommand {
+    /// With its leading slash: `/usage`.
+    pub name: String,
+    pub description: String,
+    pub category: String,
+    /// Other names that run the same command, with their slashes.
+    pub aliases: Vec<String>,
+    /// First arguments the command understands (`/reasoning high`), when it has a fixed set.
+    pub subcommands: Vec<String>,
+}
+
+/// What running a slash command asks the shell to do.
+#[derive(Debug, Clone, PartialEq, uniffi::Enum)]
+pub enum SlashOutcome {
+    /// Show this text as the command's output.
+    Output { text: String },
+    /// Send `message` to the agent as a prompt (skills, `/goal`). `display` is what the
+    /// user's side of the transcript should show instead of the full message.
+    Send { message: String, display: Option<String>, notice: Option<String> },
+    /// Put `message` in the message field for editing (`/undo`).
+    Prefill { message: String, notice: Option<String> },
+}
+
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct DayUsage {
     /// `YYYY-MM-DD` in the server's local time.

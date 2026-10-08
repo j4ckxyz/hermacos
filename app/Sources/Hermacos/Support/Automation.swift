@@ -15,6 +15,7 @@ import HermesCore
 ///     paste-files:<a>,<b>     ⌘V with files on the pasteboard
 ///     paste-image:<path>      ⌘V with image bytes on the pasteboard
 ///     paste-text:<text>       ⌘V with text on the pasteboard
+///     key:down|up|tab|return|escape   press a named key
 ///     focus:search|none       put the caret in the sidebar search, or nowhere
 ///     reload                  re-read the open chat from the server
 ///     attach:<a>,<b>          what the + button does once files are chosen
@@ -77,6 +78,17 @@ struct Automation {
                 try? await Task.sleep(for: .milliseconds(25))
             }
             try? await Task.sleep(for: .milliseconds(300))
+        case "key":
+            // A named key, delivered like a press on the keyboard.
+            let keys: [String: (String, UInt16)] = [
+                "down": ("\u{F701}", 125), "up": ("\u{F700}", 126), "tab": ("\t", 48),
+                "return": ("\r", 36), "escape": ("\u{1B}", 53),
+            ]
+            if let (characters, code) = keys[argument] {
+                bringToFront()
+                post(characters, keyCode: code)
+                try? await Task.sleep(for: .milliseconds(250))
+            }
         case "focus":
             bringToFront()
             if argument == "search" { model.searchFocusRequests += 1 }
@@ -198,6 +210,8 @@ struct Automation {
                 "time": item.timestamp.map { MessageTime.label(for: $0) } ?? "",
                 "rowId": item.rowId.map { Int($0) } ?? -1,
                 "attachments": item.attachments.map { ["name": $0.name, "image": $0.isImage, "staged": $0.source == .remote] },
+                "local": item.isLocalOnly,
+                "canRewrite": item.canRewrite,
                 "tools": item.parts.compactMap { part -> String? in
                     if case .tool(let call) = part { return call.name }
                     return nil
@@ -223,6 +237,7 @@ struct Automation {
                     case .reasoning: "reasoning"
                     case .tool(let call): "tool:\(call.name)"
                     case .notice: "notice"
+                    case .output: "output"
                     }
                 },
                 "notices": item.parts.compactMap { part -> String? in
@@ -243,6 +258,11 @@ struct Automation {
             "editing": chat.editingItemID != nil,
             "items": items,
             "searchText": model.searchText,
+            "commandCount": model.commands.count,
+            "commandMenu": chat.commandSuggestions.map(\.title),
+            "commandHighlighted": chat.highlightedSuggestion?.title ?? "",
+            "signedIn": model.phase == .ready,
+            "connection": String(describing: model.connection),
             "sessionTimes": model.sessions.prefix(8).map(\.shortTime),
             "sessionCount": model.sessions.count,
             "sessionSources": Array(Set(model.sessions.map(\.source))).sorted(),

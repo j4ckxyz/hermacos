@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use hermes_core::{
     AttachmentKind, AuthTokens, ChatEvent, ConnectionState, HermesClient, HermesListener, MessagePart, Role,
-    TurnStatus, login_password, probe_server,
+    SlashOutcome, TurnStatus, login_password, probe_server,
 };
 use tokio::sync::mpsc;
 
@@ -134,6 +134,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     check(by_ordinal.is_some() && client.load_messages(live.stored_id.clone()).await?.len() == 2, "rewrite: by position works without a row id");
     let missing = client.rewrite_prompt(live.session_id.clone(), "x".into(), Some(1), None).await;
     check(missing.is_err(), "rewrite: unknown row id is rejected, not sent as a new message");
+
+    // ── slash commands ──
+    let commands = client.commands(None).await?;
+    let usage = commands.iter().find(|c| c.name == "/usage");
+    check(commands.len() >= 12 && usage.is_some_and(|c| c.aliases == ["/tokens"] && c.category == "Session"), "slash: catalog lists commands with categories and aliases");
+    check(commands.iter().any(|c| c.name == "/reasoning" && c.subcommands.contains(&"high".to_owned())), "slash: subcommands listed");
+    let out = client.run_slash(live.session_id.clone(), "/usage".into()).await?;
+    check(matches!(&out, SlashOutcome::Output { text } if text.starts_with("Session usage") && text.contains("61,204") && !text.contains('\u{1b}')), "slash: /usage prints its output, colour codes removed");
+    let out = client.run_slash(live.session_id.clone(), "/model gpt-6-luna".into()).await?;
+    check(matches!(&out, SlashOutcome::Output { text } if text == "Model switched to gpt-6-luna"), "slash: arguments are passed through");
+    let out = client.run_slash(live.session_id.clone(), "/plan-trip in spring".into()).await?;
+    check(matches!(&out, SlashOutcome::Send { message, display: Some(d), .. } if message.contains("in spring") && d == "/plan-trip in spring"), "slash: a skill becomes a prompt to send, with the short form to display");
+    let out = client.run_slash(live.session_id.clone(), "/undo".into()).await?;
+    check(matches!(&out, SlashOutcome::Prefill { message, notice: Some(_) } if message == "what I typed before"), "slash: /undo hands text back to the message field");
+    let unknown = client.run_slash(live.session_id.clone(), "/definitely-not-a-command".into()).await;
+    check(matches!(&unknown, Err(e) if e.to_string().contains("isn't a command")), "slash: unknown commands fail with a clear message");
 
     let server_image = client.attach_server_image(live.session_id.clone(), image.server_path.unwrap()).await?;
     check(server_image.kind == AttachmentKind::Image, "attach: staged image re-attached by server path");

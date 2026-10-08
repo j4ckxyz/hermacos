@@ -15,6 +15,7 @@ pub mod markdown;
 mod pacer;
 mod preview;
 mod rest;
+mod slash;
 mod transcript;
 mod types;
 mod util;

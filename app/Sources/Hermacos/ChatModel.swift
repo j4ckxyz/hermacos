@@ -54,6 +54,8 @@ enum ItemPart: Identifiable {
     case reasoning(ReasoningSegment)
     case tool(ToolCall)
     case notice(id: String, text: String, isError: Bool)
+    /// What a slash command printed: preformatted, shown as it came.
+    case output(id: String, text: String)
 
     var id: String {
         switch self {
@@ -61,6 +63,7 @@ enum ItemPart: Identifiable {
         case .reasoning(let segment): segment.id
         case .tool(let call): "tool-\(call.id)"
         case .notice(let id, _, _): id
+        case .output(let id, _): id
         }
     }
 }
@@ -78,6 +81,11 @@ final class ChatItem: Identifiable {
     var attachments: [Attachment]
     /// Stored id of a user message: its address when it is rewritten.
     @ObservationIgnored var rowId: Int64?
+    /// Exists only on this screen (a slash command and its output), not in the conversation
+    /// the server keeps.
+    @ObservationIgnored var isLocalOnly = false
+    /// False for messages that were commands; editing their text would not rerun them.
+    var canRewrite = true
 
     init(id: String, role: Role, parts: [ItemPart], isStreaming: Bool = false, timestamp: Date? = nil,
          attachments: [Attachment] = [], rowId: Int64? = nil) {
@@ -114,8 +122,11 @@ final class ChatItem: Identifiable {
     /// Plain text of the message, for copying.
     var plainText: String {
         parts.compactMap { part -> String? in
-            if case .text(let segment) = part { return segment.source }
-            return nil
+            switch part {
+            case .text(let segment): segment.source
+            case .output(_, let text): text
+            case .reasoning, .tool, .notice: nil
+            }
         }
         .joined(separator: "\n\n")
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -137,13 +148,22 @@ final class ChatModel: Identifiable {
     var isStreaming = false
     /// What the agent is doing right now ("Thinking…", a tool name).
     var status: String?
-    var draft = ""
+    var draft = "" {
+        // A new draft means a new list of suggestions: start from its first row again.
+        didSet { if draft != oldValue { commandMenuSelection = 0 } }
+    }
     /// Files and images waiting in the composer for the next message.
     var attachments: [Attachment] = []
     /// Why the last attachment couldn't be added.
     var attachmentError: String?
     /// The user message being rewritten in place, if any.
     var editingItemID: String?
+    /// Highlighted row of the slash-command menu.
+    var commandMenuSelection = 0
+    /// The draft the menu was dismissed for; it stays closed until the draft changes.
+    var commandMenuDismissedFor: String?
+    /// A session this app created that the sidebar has not been told about yet.
+    @ObservationIgnored private var needsAnnouncement = false
     var modelName: String?
     var approval: ApprovalRequest?
     var clarify: ClarifyRequest?
@@ -228,6 +248,10 @@ final class ChatModel: Identifiable {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let pending = attachments
         guard canSend, let app, let client = app.client else { return }
+        if pending.isEmpty, CommandSuggester.isCommand(text, commands: app.commands) {
+            runCommand(text)
+            return
+        }
         draft = ""
         attachments = []
         attachmentError = nil
@@ -265,7 +289,8 @@ final class ChatModel: Identifiable {
         while true {
             do {
                 let title = text.isEmpty ? (message.attachments.first?.name ?? "Attachment") : text
-                try await bind(client: client, app: app, firstPrompt: title)
+                try await bind(client: client, app: app)
+                announce(to: app, firstPrompt: title)
                 let liveId = liveId ?? ""
                 try await stage(message, rewind: rewind, liveId: liveId, client: client)
                 if isStreaming { status = "Thinking…" }
@@ -332,7 +357,7 @@ final class ChatModel: Identifiable {
     }
 
     /// Make sure this chat has a live session on the current connection.
-    private func bind(client: HermesClient, app: AppModel, firstPrompt: String) async throws {
+    private func bind(client: HermesClient, app: AppModel) async throws {
         guard liveId == nil else { return }
         if let storedId {
             let live = try await client.resumeSession(storedId: storedId)
@@ -340,16 +365,115 @@ final class ChatModel: Identifiable {
         } else {
             let live = try await client.createSession()
             storedId = live.storedId
-            if title.isEmpty { title = String(firstPrompt.prefix(60)) }
             adopt(live)
-            app.chatWasCreated(self)
+            needsAnnouncement = true
         }
+    }
+
+    /// Tell the sidebar about a conversation this app started, once it has a real message.
+    /// (A slash command alone leaves nothing on the server worth listing.)
+    private func announce(to app: AppModel, firstPrompt: String) {
+        guard needsAnnouncement else { return }
+        needsAnnouncement = false
+        if title.isEmpty { title = String(firstPrompt.prefix(60)) }
+        app.chatWasCreated(self)
     }
 
     private func adopt(_ live: LiveSession) {
         liveId = live.sessionId
         if let model = live.model { modelName = model }
         app?.register(self)
+    }
+
+    // MARK: Slash commands
+
+    /// Suggestions for the command being typed, empty when the menu should be closed.
+    var commandSuggestions: [CommandSuggestion] {
+        guard let app, draft != commandMenuDismissedFor, attachments.isEmpty else { return [] }
+        return CommandSuggester.suggestions(for: draft, commands: app.commands)
+    }
+
+    var highlightedSuggestion: CommandSuggestion? {
+        let suggestions = commandSuggestions
+        guard !suggestions.isEmpty else { return nil }
+        return suggestions[min(max(commandMenuSelection, 0), suggestions.count - 1)]
+    }
+
+    func moveCommandSelection(by offset: Int) {
+        let count = commandSuggestions.count
+        guard count > 0 else { return }
+        commandMenuSelection = (min(max(commandMenuSelection, 0), count - 1) + offset + count) % count
+    }
+
+    /// Put a suggestion in the message field, ready for arguments or Return.
+    func accept(_ suggestion: CommandSuggestion) {
+        draft = suggestion.completion
+        commandMenuSelection = 0
+        app?.composerFocusRequests += 1
+    }
+
+    /// Run `/command arguments`: here for the few that are about this app, on the server
+    /// for the rest.
+    func runCommand(_ line: String) {
+        guard let app, let client = app.client else { return }
+        let name = line.split(separator: " ").first.map { $0.lowercased() } ?? ""
+        draft = ""
+        commandMenuSelection = 0
+        switch name {
+        case "/new", "/clear", "/reset":
+            app.newChat()
+            return
+        default:
+            break
+        }
+        let echo = userItem(text: line, attachments: [])
+        echo.isLocalOnly = true
+        echo.canRewrite = false
+        items.append(echo)
+        let result = ChatItem(id: nextID("command"), role: .assistant, parts: [], isStreaming: true)
+        result.isLocalOnly = true
+        items.append(result)
+        if name == "/help" {
+            finish(result, with: [.output(id: nextID("output"), text: CommandSuggester.helpText(app.commands))])
+            return
+        }
+        isStreaming = true
+        status = "Running \(name)…"
+        Task {
+            do {
+                try await bind(client: client, app: app)
+                let outcome = try await client.runSlash(sessionId: liveId ?? "", command: line)
+                switch outcome {
+                case .output(let text):
+                    finish(result, with: [.output(id: nextID("output"), text: text)])
+                case .prefill(let message, let notice):
+                    draft = message
+                    app.composerFocusRequests += 1
+                    finish(result, with: notice.map { [.notice(id: nextID("notice"), text: $0, isError: false)] } ?? [])
+                case .send(let message, let display, let notice):
+                    // The command stands for a prompt: its echo becomes the real message.
+                    items.removeAll { $0 === result }
+                    if let display, !display.isEmpty {
+                        echo.parts = [.text(TextSegment(id: nextID("text"), text: display))]
+                    }
+                    echo.isLocalOnly = false
+                    if let notice, !notice.isEmpty { appendNotice(notice, isError: false) }
+                    beginTurn(status: "Thinking…")
+                    await deliver(echo, text: message, rewind: nil, client: client, app: app)
+                }
+            } catch {
+                finish(result, with: [.notice(id: nextID("notice"), text: error.userMessage, isError: true)])
+            }
+        }
+    }
+
+    private func finish(_ result: ChatItem, with parts: [ItemPart]) {
+        result.parts = parts
+        result.isStreaming = false
+        result.timestamp = Date()
+        if parts.isEmpty { items.removeAll { $0 === result } }
+        isStreaming = false
+        status = nil
     }
 
     // MARK: Rewriting an earlier message
@@ -373,7 +497,9 @@ final class ChatModel: Identifiable {
                 }
             }
             guard let index = items.firstIndex(where: { $0 === message }) else { return }
-            let rewind = Rewind(rowId: message.rowId, ordinal: UInt32(items[..<index].count { $0.role == .user }))
+            let rewind = Rewind(
+                rowId: message.rowId,
+                ordinal: UInt32(items[..<index].count { $0.role == .user && !$0.isLocalOnly }))
             items.removeSubrange(index...)
             let replacement = userItem(text: text, attachments: message.attachments)
             items.append(replacement)
@@ -475,7 +601,7 @@ final class ChatModel: Identifiable {
                 switch part {
                 case .text(let segment): !segment.source.isEmpty
                 case .reasoning: true
-                case .tool, .notice: false
+                case .tool, .notice, .output: false
                 }
             }
             guard !alreadyShown else { return }

@@ -244,7 +244,7 @@ fn link_citations(doc: &mut MdDocument) {
 
 // ───────────────────────── normalisation ─────────────────────────
 
-fn strip_ansi(text: &str) -> String {
+pub(crate) fn strip_ansi(text: &str) -> String {
     if !text.contains('\u{1b}') {
         return text.to_owned();
     }

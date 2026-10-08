@@ -11,9 +11,10 @@ use crate::error::{HermesError, Result};
 use crate::gateway::Gateway;
 use crate::on_runtime;
 use crate::rest::Rest;
+use crate::slash;
 use crate::types::{
     AttachmentKind, AuthTokens, ChatMessage, HermesListener, LiveSession, PlanUsage, SearchHit,
-    ServerStatus, SessionSummary, StagedAttachment, UsageSummary,
+    ServerStatus, SessionSummary, SlashCommand, SlashOutcome, StagedAttachment, UsageSummary,
 };
 use crate::util::{base64_standard, bool_of, opt_str, str_of};
 
@@ -315,6 +316,27 @@ impl HermesClient {
             Ok(attached)
         })
         .await
+    }
+
+    /// Every slash command available, for the command menu. `session_id` (a live session)
+    /// adds the commands specific to that conversation's workspace.
+    pub async fn commands(&self, session_id: Option<String>) -> Result<Vec<SlashCommand>> {
+        let inner = self.inner.clone();
+        on_runtime(async move {
+            let params = match session_id {
+                Some(id) => json!({ "session_id": id }),
+                None => json!({}),
+            };
+            let catalog = inner.gateway.request("commands.catalog", params, Duration::from_secs(30)).await?;
+            Ok(slash::commands_from_catalog(&catalog))
+        })
+        .await
+    }
+
+    /// Run a slash command (`/usage`, `/model gpt`, a skill) in a live session.
+    pub async fn run_slash(&self, session_id: String, command: String) -> Result<SlashOutcome> {
+        let inner = self.inner.clone();
+        on_runtime(async move { slash::run(&inner.gateway, &session_id, &command).await }).await
     }
 
     /// Daily and per-model usage for the last `days` days, plus the plan allowance if any.
