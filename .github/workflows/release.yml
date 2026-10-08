@@ -37,9 +37,14 @@ jobs:
       - name: Test the core
         run: |
           cargo test -p hermes-core
-          cargo build -p hermes-mock -p hermes-core --examples
+          # Two builds: `--examples` on its own would leave the mock's binary unbuilt.
+          cargo build -p hermes-mock
+          cargo build -p hermes-core --examples
           target/debug/hermes-mock --port 9119 --many &
-          sleep 2
+          for attempt in $(seq 1 30); do
+            curl -fs http://127.0.0.1:9119/api/status >/dev/null && break
+            sleep 1
+          done
           cargo run -p hermes-core --example features -- http://127.0.0.1:9119
 
       - name: Import the signing certificate
