@@ -89,7 +89,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           prerelease=()
-          # 0.x versions and anything with a suffix (v0.3.0-beta.1) are marked as pre-releases.
-          if [[ "$VERSION" == v0.* || "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          # A tag with a suffix (v0.3.0-beta.1) is a pre-release. Plain versions, 0.x included,
+          # are full releases: "latest" on GitHub, and what the installer fetches, skips
+          # pre-releases.
+          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
           gh release create "$VERSION" dist/*.dmg dist/*.zip dist/SHA256SUMS.txt \
             --title "Hermacos ${VERSION#v}" --generate-notes "${prerelease[@]}"

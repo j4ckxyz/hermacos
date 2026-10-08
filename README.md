@@ -171,8 +171,8 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-The tag is the version the app reports. `0.x` tags and tags with a suffix (`v0.3.0-beta.1`)
-are published as pre-releases. Every push to `main` runs the same tests without releasing.
+The tag is the version the app reports. A tag with a suffix (`v0.3.0-beta.1`) is published
+as a pre-release, which the installer skips while a full release exists. Every push to `main` runs the same tests without releasing.
 
 To ship without the Gatekeeper warning, add a Developer ID certificate and notary credentials
 as repository secrets; `.github/workflows/release.yml` lists them and uses them when present.

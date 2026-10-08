@@ -22,11 +22,20 @@ if [ "$major" -lt "$minimum_macos" ]; then
   exit 1
 fi
 
+# The zip of a release, from GitHub's description of it (or of a list of them, newest first).
+zip_url() {
+  curl -fsSL "$1" 2>/dev/null | grep '"browser_download_url"' | grep '\.zip"' | head -n 1 | cut -d '"' -f 4
+}
+
 url="${HERMACOS_ZIP:-}"
 if [ -z "$url" ]; then
-  url="$(curl -fsSL "https://api.github.com/repos/$repo/releases/latest" \
-    | grep '"browser_download_url"' | grep '\.zip"' | head -n 1 | cut -d '"' -f 4)"
-  [ -n "$url" ] || { echo "No release found for $repo." >&2; exit 1; }
+  # The latest full release; if there are only pre-releases so far, the newest of those.
+  url="$(zip_url "https://api.github.com/repos/$repo/releases/latest")"
+  [ -n "$url" ] || url="$(zip_url "https://api.github.com/repos/$repo/releases?per_page=5")"
+  if [ -z "$url" ]; then
+    echo "No release of Hermacos is published yet. See https://github.com/$repo/releases" >&2
+    exit 1
+  fi
 fi
 
 dest="${HERMACOS_DEST:-/Applications}"
